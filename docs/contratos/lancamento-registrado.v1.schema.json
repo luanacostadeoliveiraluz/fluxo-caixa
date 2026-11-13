@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LancamentoRegistrado v1",
+  "description": "Publicado pelo serviço de Lançamentos no exchange 'fluxo-caixa.eventos' com routing key 'lancamento.registrado'. Entrega: pelo menos uma vez; consumidores devem deduplicar por event_id.",
+  "type": "object",
+  "required": ["event_id", "event_type", "event_version", "occurred_at", "data"],
+  "properties": {
+    "event_id": {"type": "string", "format": "uuid"},
+    "event_type": {"const": "LancamentoRegistrado"},
+    "event_version": {"const": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "data": {
+      "type": "object",
+      "required": ["lancamento_id", "tipo", "valor_centavos", "data_lancamento"],
+      "properties": {
+        "lancamento_id": {"type": "string", "format": "uuid"},
+        "tipo": {"enum": ["CREDITO", "DEBITO"]},
+        "valor_centavos": {"type": "integer", "minimum": 1},
+        "data_lancamento": {"type": "string", "format": "date"},
+        "estorno_de": {"type": ["string", "null"], "format": "uuid"}
+      }
+    }
+  },
+  "examples": [{
+    "event_id": "8a6e0f5e-2f1d-4c1b-9d3e-1c2b3a4d5e6f",
+    "event_type": "LancamentoRegistrado",
+    "event_version": 1,
+    "occurred_at": "2026-11-13T14:02:11.120000+00:00",
+    "data": {
+      "lancamento_id": "3f2a9c1e-5b7d-4e8a-9c21-7d4e5f6a8b90",
+      "tipo": "CREDITO",
+      "valor_centavos": 15075,
+      "data_lancamento": "2026-11-13",
+      "estorno_de": null
+    }
+  }]
+}

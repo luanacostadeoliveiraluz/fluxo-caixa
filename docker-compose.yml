@@ -1,0 +1,108 @@
+# Ambiente local completo: docker compose up --build
+#
+#   Lançamentos API ........ http://localhost:8001/docs
+#   Consolidado API (LB) ... http://localhost:8002/docs   (nginx -> 2 réplicas)
+#   RabbitMQ (painel) ...... http://localhost:15672        (guest / guest)
+#   Prometheus ............. http://localhost:9090
+#
+# Princípio "database per service": cada serviço tem o seu PostgreSQL.
+
+x-lancamentos-env: &lancamentos-env
+  DATABASE_URL: postgresql://lancamentos:lancamentos@db-lancamentos:5432/lancamentos
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2F
+  API_KEYS: dev-key-lancamentos
+
+x-consolidado-env: &consolidado-env
+  DATABASE_URL: postgresql://consolidado:consolidado@db-consolidado:5432/consolidado
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2F
+  API_KEYS: dev-key-consolidado
+  CACHE_TTL_SEGUNDOS: "2"
+
+services:
+  db-lancamentos:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: lancamentos
+      POSTGRES_PASSWORD: lancamentos
+      POSTGRES_DB: lancamentos
+    volumes: [db-lancamentos:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lancamentos"]
+      interval: 5s
+      retries: 10
+
+  db-consolidado:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: consolidado
+      POSTGRES_PASSWORD: consolidado
+      POSTGRES_DB: consolidado
+    volumes: [db-consolidado:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U consolidado"]
+      interval: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports: ["15672:15672"]
+    volumes: [rabbitmq:/var/lib/rabbitmq]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      retries: 10
+
+  # ---------------- Serviço de Lançamentos ----------------
+  lancamentos-api:
+    build: ./services/lancamentos
+    environment: *lancamentos-env
+    ports: ["8001:8000"]
+    depends_on:
+      db-lancamentos: {condition: service_healthy}
+    restart: unless-stopped
+
+  lancamentos-outbox-relay:
+    build: ./services/lancamentos
+    command: ["python", "-m", "app.outbox_relay"]
+    environment: *lancamentos-env
+    depends_on:
+      db-lancamentos: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+      lancamentos-api: {condition: service_started}  # a API cria o schema
+    restart: unless-stopped
+
+  # ---------------- Serviço de Consolidado ----------------
+  consolidado-api:
+    build: ./services/consolidado
+    environment: *consolidado-env
+    deploy:
+      replicas: 2   # escala horizontal atrás do nginx
+    depends_on:
+      db-consolidado: {condition: service_healthy}
+    restart: unless-stopped
+
+  consolidado-consumer:
+    build: ./services/consolidado
+    command: ["python", "-m", "app.consumer"]
+    environment: *consolidado-env
+    depends_on:
+      db-consolidado: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    restart: unless-stopped
+
+  consolidado-lb:
+    image: nginx:1.27-alpine
+    volumes: ["./infra/nginx/consolidado.conf:/etc/nginx/conf.d/default.conf:ro"]
+    ports: ["8002:80"]
+    depends_on: [consolidado-api]
+
+  # ---------------- Observabilidade ----------------
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes: ["./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9090:9090"]
+
+volumes:
+  db-lancamentos:
+  db-consolidado:
+  rabbitmq:
